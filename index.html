@@ -1,0 +1,380 @@
+<!doctype html>
+<html lang="pt-BR">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<title>A Moeda da Ceifadora</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Jacquard+12&family=Pixelify+Sans:wght@400;600&family=Silkscreen&display=swap">
+<style>
+/* Mesa de masmorra: HUD de pedra no topo, carta de pergaminho no centro, três cartas de ação embaixo. Uma coluna estreita, feita pro polegar. */
+:root {
+  --pedra: #16131d;
+  --pedra-2: #221d2b;
+  --pedra-3: #302839;
+  --borda: #0b090f;
+  --pergaminho: #e8dab5;
+  --pergaminho-2: #cdb98a;
+  --tinta: #2b2117;
+  --tinta-2: #6b5a43;
+  --osso: #ddd3bf;
+  --osso-2: #9d93a6;
+  --tocha: #e3a33b;
+  --sangue: #c8413f;
+  --eixo-coracao: #d46a7e;
+  --eixo-palavra: #7c9be0;
+  --eixo-passo: #8cb874;
+  --eixo-rep: #e3a33b;
+  --f-titulo: "Jacquard 12", "Old English Text MT", Georgia, serif;
+  --f-texto: "Pixelify Sans", "Trebuchet MS", system-ui, sans-serif;
+  --f-rotulo: "Silkscreen", "Courier New", monospace;
+  --perigo: 0;
+  color-scheme: dark;
+}
+
+* { box-sizing: border-box; }
+[hidden] { display: none !important; }
+html, body { height: 100%; }
+body {
+  margin: 0;
+  background:
+    radial-gradient(120% 60% at 50% -10%, rgba(227, 163, 59, .10), transparent 60%),
+    var(--pedra);
+  color: var(--osso);
+  font-family: var(--f-texto);
+  font-size: 16px;
+  -webkit-tap-highlight-color: transparent;
+}
+body::after {
+  content: "";
+  position: fixed;
+  inset: 0;
+  pointer-events: none;
+  background: radial-gradient(ellipse at center, transparent 45%, rgba(200, 65, 63, .55) 100%);
+  opacity: var(--perigo);
+  transition: opacity .6s;
+  z-index: 5;
+}
+button { font: inherit; color: inherit; }
+canvas { image-rendering: pixelated; display: block; }
+
+/* Borda de pixel: o truque das quatro sombras deixa os cantos "mordidos" */
+.pixel {
+  box-shadow:
+    0 -4px 0 0 var(--borda), 0 4px 0 0 var(--borda),
+    -4px 0 0 0 var(--borda), 4px 0 0 0 var(--borda);
+}
+
+.mesa {
+  max-width: 460px;
+  min-height: 100%;
+  margin: 0 auto;
+  padding-inline: 16px;
+  padding-block: 12px 20px;
+  display: flex;
+  flex-direction: column;
+  gap: 18px;
+}
+
+/* ── HUD ── */
+.hud { display: flex; flex-direction: column; gap: 10px; }
+.hud-topo { display: flex; align-items: center; justify-content: space-between; gap: 12px; }
+.caveira { display: flex; align-items: center; gap: 8px; }
+.caveira-num {
+  font-family: var(--f-rotulo);
+  font-size: 26px;
+  color: var(--osso);
+  font-variant-numeric: tabular-nums;
+  min-width: 3.4ch;
+  transition: color .3s;
+}
+.caveira[data-nivel="medio"] .caveira-num { color: var(--tocha); }
+.caveira[data-nivel="alto"] .caveira-num { color: var(--sangue); }
+.caveira[data-nivel="alto"] canvas { animation: treme .5s steps(2) infinite; }
+@keyframes treme { 0% { transform: translate(0, 0); } 50% { transform: translate(1px, -1px); } 100% { transform: translate(-1px, 1px); } }
+.ouro { display: flex; align-items: center; gap: 6px; font-family: var(--f-rotulo); font-size: 18px; color: var(--tocha); font-variant-numeric: tabular-nums; }
+.btn-ossuario {
+  background: var(--pedra-2);
+  border: 0;
+  padding: 6px 10px;
+  font-family: var(--f-rotulo);
+  font-size: 11px;
+  letter-spacing: .04em;
+  color: var(--osso-2);
+  cursor: pointer;
+}
+.btn-ossuario:hover, .btn-ossuario:focus-visible { color: var(--osso); outline: none; background: var(--pedra-3); }
+
+.eixos { display: grid; grid-template-columns: 1fr 1fr; gap: 8px 16px; }
+.eixo { display: flex; flex-direction: column; gap: 3px; min-width: 0; }
+.eixo-nome { font-family: var(--f-rotulo); font-size: 10px; letter-spacing: .06em; color: var(--osso-2); display: flex; justify-content: space-between; }
+.eixo-nome b { font-weight: 400; color: var(--osso); }
+.trilho { position: relative; height: 8px; background: var(--pedra-3); }
+.trilho::after { content: ""; position: absolute; left: 50%; top: -2px; bottom: -2px; width: 2px; margin-left: -1px; background: var(--osso-2); opacity: .5; }
+.enchimento { position: absolute; top: 0; bottom: 0; background: var(--cor); transition: left .35s steps(6), width .35s steps(6); }
+.eixo.mexeu .trilho { animation: pisca .5s steps(2) 2; }
+@keyframes pisca { 50% { background: var(--osso-2); } }
+
+/* ── Carta de evento ── */
+.evento {
+  background: var(--pergaminho);
+  color: var(--tinta);
+  padding: 16px 18px 20px;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: 10px;
+  flex: 1 1 auto;
+  min-height: 300px;
+  max-height: 560px;
+}
+.evento.entra { animation: entra .32s steps(5); }
+@keyframes entra { from { transform: translateY(14px) rotate(-1.5deg); opacity: 0; } to { transform: none; opacity: 1; } }
+.arco-rotulo { align-self: stretch; margin-bottom: auto; display: flex; justify-content: space-between; font-family: var(--f-rotulo); font-size: 10px; letter-spacing: .06em; color: var(--tinta-2); }
+.retrato { background: var(--pergaminho-2); padding: 8px; }
+.quem { font-family: var(--f-rotulo); font-size: 13px; letter-spacing: .04em; min-height: 1.2em; }
+.texto { margin: 0 0 auto; font-size: 19px; line-height: 1.38; text-align: center; text-wrap: pretty; max-width: 34ch; }
+
+/* ── Cartas de ação ── */
+.acoes { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 12px; }
+.acao {
+  position: relative;
+  background: var(--pedra-2);
+  border: 0;
+  padding: 12px 6px 10px;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 8px;
+  cursor: pointer;
+  min-width: 0;
+  transition: transform .12s steps(2), background .12s;
+}
+.acao:hover, .acao:focus-visible { background: var(--pedra-3); transform: translateY(-4px); outline: none; }
+.acao:focus-visible { box-shadow: 0 -4px 0 0 var(--tocha), 0 4px 0 0 var(--tocha), -4px 0 0 0 var(--tocha), 4px 0 0 0 var(--tocha); }
+.acao:active { transform: translateY(0); }
+.acao .tecla { position: absolute; top: 4px; left: 6px; font-family: var(--f-rotulo); font-size: 9px; color: var(--osso-2); opacity: .7; }
+.acao .rotulo { font-size: 14px; line-height: 1.2; text-align: center; text-wrap: balance; min-height: 2.4em; display: flex; align-items: center; }
+.pips { display: flex; gap: 5px; min-height: 12px; align-items: center; }
+.pip { width: 6px; height: 6px; background: var(--cor); display: flex; align-items: center; justify-content: center; font-family: var(--f-rotulo); font-size: 8px; color: var(--borda); line-height: 1; }
+.pip.grande { width: 10px; height: 10px; }
+.pips.sussurro .pip { width: 12px; height: 12px; }
+.falcao { font-family: var(--f-rotulo); font-size: 10px; padding: 2px 5px; background: var(--borda); color: var(--osso); }
+.falcao.sobe { color: var(--sangue); }
+.falcao.desce { color: var(--eixo-passo); }
+.dejavu { position: absolute; top: 4px; right: 4px; display: flex; align-items: center; gap: 2px; font-family: var(--f-rotulo); font-size: 8px; color: var(--sangue); }
+.acoes.saindo .acao { pointer-events: none; }
+.acoes.saindo .acao:not(.escolhida) { opacity: .25; }
+.acoes.saindo .acao.escolhida { transform: translateY(-10px); background: var(--pedra-3); }
+
+/* ── Rodapé de poderes ── */
+.rodape { display: flex; flex-wrap: wrap; gap: 8px; justify-content: center; min-height: 28px; }
+.chip { font-family: var(--f-rotulo); font-size: 10px; letter-spacing: .04em; padding: 5px 8px; background: var(--pedra-2); color: var(--osso); border: 0; display: flex; align-items: center; gap: 6px; }
+button.chip { cursor: pointer; }
+button.chip:hover, button.chip:focus-visible { background: var(--pedra-3); outline: none; color: var(--tocha); }
+
+/* ── Eco (frase curta depois da escolha) ── */
+.eco {
+  position: fixed;
+  left: 50%;
+  bottom: calc(24px + env(safe-area-inset-bottom, 0px));
+  transform: translateX(-50%);
+  width: min(420px, calc(100% - 32px));
+  background: var(--borda);
+  color: var(--osso);
+  padding: 12px 14px;
+  font-size: 15px;
+  line-height: 1.35;
+  text-align: center;
+  z-index: 20;
+  pointer-events: none;
+  transition: opacity .25s;
+}
+.eco .ganho { color: var(--tocha); font-family: var(--f-rotulo); font-size: 12px; display: block; margin-top: 4px; }
+
+/* ── Telas sobrepostas ── */
+.tela {
+  position: fixed;
+  inset: 0;
+  z-index: 30;
+  overflow-y: auto;
+  padding: calc(20px + env(safe-area-inset-top, 0px)) 16px calc(24px + env(safe-area-inset-bottom, 0px));
+  background: rgba(11, 9, 15, .985);
+  display: flex;
+  justify-content: center;
+  align-items: flex-start;
+}
+.painel { width: 100%; max-width: 440px; margin-block: auto; display: flex; flex-direction: column; align-items: center; gap: 14px; text-align: center; }
+.titulo-grande { font-family: var(--f-titulo); font-weight: 400; font-size: clamp(44px, 13vw, 64px); line-height: .95; margin: 0; text-wrap: balance; color: var(--osso); }
+.titulo-medio { font-family: var(--f-titulo); font-weight: 400; font-size: clamp(36px, 10vw, 48px); line-height: 1; margin: 0; text-wrap: balance; }
+.sobre { font-family: var(--f-rotulo); font-size: 11px; letter-spacing: .08em; color: var(--osso-2); text-transform: uppercase; }
+.frase { font-size: 18px; line-height: 1.4; max-width: 34ch; margin: 0; text-wrap: pretty; }
+.fala-ceifadora { font-size: 16px; line-height: 1.4; color: var(--osso-2); font-style: italic; max-width: 32ch; margin: 0; }
+.botoes { display: flex; flex-direction: column; gap: 12px; align-self: stretch; padding-inline: 8px; }
+.btn {
+  border: 0;
+  padding: 14px 16px;
+  font-family: var(--f-rotulo);
+  font-size: 13px;
+  letter-spacing: .06em;
+  cursor: pointer;
+  background: var(--pedra-3);
+  color: var(--osso);
+}
+.btn:hover, .btn:focus-visible { outline: none; background: #3d3448; }
+.btn.principal { background: var(--tocha); color: var(--borda); }
+.btn.principal:hover, .btn.principal:focus-visible { background: #f0b552; }
+.btn.perigo { background: var(--sangue); color: var(--osso); }
+.btn:disabled { opacity: .4; cursor: not-allowed; }
+.selo { font-family: var(--f-rotulo); font-size: 11px; letter-spacing: .08em; padding: 5px 10px; background: var(--sangue); color: var(--osso); }
+.selo.ouro-selo { background: var(--tocha); color: var(--borda); }
+.motivos { display: flex; flex-wrap: wrap; gap: 8px; justify-content: center; }
+.motivo { font-family: var(--f-rotulo); font-size: 10px; letter-spacing: .04em; padding: 5px 8px; background: var(--pedra-2); border-left: 4px solid var(--cor); }
+
+.tela-morte { background: rgba(38, 10, 12, .985); }
+.tela-final { background: rgba(28, 20, 8, .985); }
+
+.como { display: grid; gap: 10px; text-align: left; max-width: 36ch; font-size: 15px; line-height: 1.4; color: var(--osso-2); margin: 0; padding: 0; list-style: none; }
+.como b { color: var(--osso); font-weight: 600; }
+
+/* Caravana */
+.itens { display: grid; gap: 12px; align-self: stretch; }
+.item { display: grid; grid-template-columns: auto 1fr auto; gap: 12px; align-items: center; background: var(--pedra-2); padding: 12px; text-align: left; }
+.item h3 { margin: 0; font-size: 16px; font-weight: 600; }
+.item p { margin: 2px 0 0; font-size: 14px; line-height: 1.35; color: var(--osso-2); }
+.item .btn { padding: 10px 12px; font-size: 12px; white-space: nowrap; }
+
+/* Ossuário */
+.lista-ossos { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 10px; align-self: stretch; }
+.osso { background: var(--pedra-2); padding: 10px; text-align: left; display: flex; gap: 10px; align-items: center; min-width: 0; }
+.osso div { min-width: 0; }
+.osso strong { display: block; font-size: 14px; font-weight: 600; line-height: 1.2; }
+.osso span { font-family: var(--f-rotulo); font-size: 9px; color: var(--osso-2); letter-spacing: .04em; }
+.osso.oculto strong { color: var(--osso-2); }
+.osso.oculto canvas { opacity: .25; }
+.secao-titulo { font-family: var(--f-rotulo); font-size: 12px; letter-spacing: .08em; color: var(--tocha); align-self: flex-start; margin: 8px 0 0; }
+
+@media (max-width: 380px) {
+  .texto { font-size: 17px; }
+  .acao .rotulo { font-size: 13px; }
+  .eixos { gap: 6px 12px; }
+}
+@media (prefers-reduced-motion: reduce) {
+  *, *::before, *::after { animation: none !important; transition: none !important; }
+}
+</style>
+</head>
+<body>
+
+<main class="mesa" id="mesa">
+  <header class="hud">
+    <div class="hud-topo">
+      <div class="caveira" id="caveira" data-nivel="baixo" title="Quão perto a morte está">
+        <canvas id="caveiraIcone" width="36" height="36" aria-hidden="true"></canvas>
+        <span class="caveira-num" id="caveiraPct">0%</span>
+      </div>
+      <div class="ouro" title="Ouro"><canvas id="ouroIcone" width="24" height="24" aria-hidden="true"></canvas><span id="ouro">0</span></div>
+      <button class="btn-ossuario pixel" id="btnOssuario" type="button">OSSUÁRIO 0/13</button>
+    </div>
+    <div class="eixos" id="eixos"></div>
+  </header>
+
+  <section class="evento pixel" id="evento" aria-live="polite">
+    <div class="arco-rotulo"><span id="arcoNome">ARCO I · A PRISÃO</span><span id="arcoPos">1/9</span></div>
+    <div class="retrato pixel"><canvas id="retrato" width="96" height="96" aria-hidden="true"></canvas></div>
+    <div class="quem" id="quem"></div>
+    <p class="texto" id="texto">Sinos. Fumaça. Gritos lá fora: a cidade foi invadida.</p>
+  </section>
+
+  <section class="acoes" id="acoes" aria-label="Escolhas"></section>
+
+  <footer class="rodape" id="rodape"></footer>
+</main>
+
+<div class="eco pixel" id="eco" role="status" hidden></div>
+
+<div class="tela" id="telaTitulo">
+  <div class="painel">
+    <canvas id="tituloIcone" width="96" height="96" aria-hidden="true"></canvas>
+    <h1 class="titulo-grande">A Moeda da Ceifadora</h1>
+    <p class="frase">Tua forca é amanhã. A cidade caiu hoje. A porta da cela está aberta.</p>
+    <ul class="como">
+      <li><b>Escolhe uma das três cartas.</b> Cada escolha muda quem tu és: Coração, Palavra, Passo e Fama.</li>
+      <li><b>A caveira mostra quão perto a morte está.</b> Ela não diz de onde ela vem.</li>
+      <li><b>Morrer faz parte.</b> Tu roubaste da Ceifadora: ela te devolve pra cela, e tu lembras.</li>
+    </ul>
+    <div class="botoes">
+      <button class="btn principal pixel" id="btnComecar" type="button">FUGIR DA CELA</button>
+      <button class="btn pixel" id="btnTituloOssuario" type="button">OSSUÁRIO</button>
+    </div>
+    <span class="sobre" id="tituloMeta"></span>
+  </div>
+</div>
+
+<div class="tela tela-morte" id="telaMorte" hidden>
+  <div class="painel">
+    <span class="selo" id="morteSelo">NOVA MORTE</span>
+    <canvas id="morteRetrato" width="96" height="96" aria-hidden="true"></canvas>
+    <h2 class="titulo-medio" id="morteTitulo"></h2>
+    <p class="frase" id="morteTexto"></p>
+    <div class="motivos" id="morteMotivos"></div>
+    <p class="fala-ceifadora" id="morteFala"></p>
+    <span class="sobre" id="morteInfo"></span>
+    <div class="botoes">
+      <button class="btn principal pixel" id="btnVoltarTempo" type="button" hidden>VIRAR A AMPULHETA (−5 CARTAS)</button>
+      <button class="btn perigo pixel" id="btnRenascer" type="button">ACORDAR NA CELA</button>
+      <button class="btn pixel" id="btnCopiarMorte" type="button">COPIAR MINHA MORTE</button>
+    </div>
+  </div>
+</div>
+
+<div class="tela tela-final" id="telaFinal" hidden>
+  <div class="painel">
+    <span class="selo ouro-selo" id="finalSelo">NOVO FINAL</span>
+    <canvas id="finalRetrato" width="96" height="96" aria-hidden="true"></canvas>
+    <h2 class="titulo-medio" id="finalTitulo"></h2>
+    <p class="frase" id="finalTexto"></p>
+    <p class="fala-ceifadora" id="finalFala"></p>
+    <span class="sobre" id="finalInfo"></span>
+    <div class="botoes">
+      <button class="btn principal pixel" id="btnDeNovo" type="button">JOGAR DE NOVO</button>
+      <button class="btn pixel" id="btnCopiarFinal" type="button">COPIAR MEU FINAL</button>
+    </div>
+  </div>
+</div>
+
+<div class="tela" id="telaCaravana" hidden>
+  <div class="painel">
+    <canvas id="grukRetrato" width="96" height="96" aria-hidden="true"></canvas>
+    <span class="sobre">A caravana do Gruk</span>
+    <p class="frase" id="grukFala"></p>
+    <div class="ouro" style="font-size:22px"><canvas id="caravanaOuroIcone" width="24" height="24" aria-hidden="true"></canvas><span id="caravanaOuro">0</span></div>
+    <div class="itens" id="itens"></div>
+    <div class="botoes">
+      <button class="btn principal pixel" id="btnSeguir" type="button">SEGUIR VIAGEM</button>
+    </div>
+  </div>
+</div>
+
+<div class="tela" id="telaOssuario" hidden>
+  <div class="painel">
+    <h2 class="titulo-medio">Ossuário</h2>
+    <span class="sobre" id="ossuarioResumo"></span>
+    <p class="secao-titulo">MORTES</p>
+    <div class="lista-ossos" id="listaMortes"></div>
+    <p class="secao-titulo">FINAIS</p>
+    <div class="lista-ossos" id="listaFinais"></div>
+    <div class="botoes">
+      <button class="btn pixel" id="btnFecharOssuario" type="button">FECHAR</button>
+    </div>
+  </div>
+</div>
+
+<script src="js/sprites.js"></script>
+<script src="js/cartas.js"></script>
+<script src="js/nucleo.js"></script>
+<script src="js/interface.js"></script>
+</body>
+</html>
