@@ -86,7 +86,7 @@
       flags: {}, vistas: {}, fixaFeita: {}, fila: [], alerta: {}, fortuna: {},
       poderes: { falcao: 0, sussurro: 0 }, itens: { capa: 0, ampulheta: 0 }, bolsa: false,
       caravana: null, compras: {}, morte: null, morteNova: false, morteChave: null,
-      final: null, finalNovo: false, historico: []
+      final: null, finalNovo: false, historico: [], log: []
     };
     sacar(est, meta, rng);
     return est;
@@ -150,6 +150,7 @@
     meta.mortes[id] = (meta.mortes[id] || 0) + 1;
     meta.totalMortes += 1;
     if (chave) meta.dejavu[chave] = true;
+    if (est.log) est.log.push({ tipo: 'morte', id, por: chave ? 'escolha' : 'caveira', arco: est.arco });
   }
 
   function finalizar(est, meta, id) {
@@ -157,6 +158,7 @@
     est.final = id;
     est.finalNovo = !meta.finais[id];
     meta.finais[id] = (meta.finais[id] || 0) + 1;
+    if (est.log) est.log.push({ tipo: 'final', id });
   }
 
   function sortear(est, meta, rng, arcoN) {
@@ -216,18 +218,29 @@
     if (!alvo) return null;
     const carta = cartaAtual(est);
 
-    const foto = copia(Object.assign({}, est, { historico: [] }));
+    const foto = copia(Object.assign({}, est, { historico: [], log: [] }));
     est.historico.push(foto);
     if (est.historico.length > HISTORICO_MAX) est.historico.shift();
 
+    const cavAntes = caveira(est, meta).pct;
     const r = resolver(alvo.o, est, meta);
     const ganho = aplicar(r, est, rng);
     est.total += 1;
+    const cavDepois = caveira(est, meta);
+    const entrada = {
+      tipo: 'escolha', n: est.total, arco: est.arco, carta: carta.id,
+      opcoes: vis.map(x => x.o.rotulo), escolha: alvo.o.rotulo,
+      ef: r.ef || {}, ganho, eixos: Object.assign({}, est.eixos), rep: est.rep, ouro: est.ouro,
+      caveira: [cavAntes, cavDepois.pct], mortePerto: cavDepois.id,
+      eco: r.eco || null, poderes: { falcao: est.poderes.falcao > 0, sussurro: est.poderes.sussurro > 0 }
+    };
+    if (!est.log) est.log = [];
+    est.log.push(entrada);
     if (est.poderes.falcao > 0) est.poderes.falcao -= 1;
     if (est.poderes.sussurro > 0) est.poderes.sussurro -= 1;
 
     const chave = carta.id + ':' + alvo.i;
-    const res = { eco: r.eco || null, ganho, chave, evento: !!r.ouroEvento };
+    const res = { eco: r.eco || null, ganho, chave, evento: !!r.ouroEvento, entrada };
     if (r.morte) { morrer(est, meta, r.morte, chave); return res; }
     if (r.final) { finalizar(est, meta, r.final); return res; }
     if (r.proxima) est.fila.push(r.proxima);
@@ -261,6 +274,7 @@
     else if (id === 'ampulheta') est.itens.ampulheta += 1;
     else if (id === 'agua') est.rep = 0;
     else if (id === 'bolsa') est.bolsa = true;
+    if (est.log) est.log.push({ tipo: 'compra', item: id, ouro: est.ouro });
     return true;
   }
 
@@ -277,6 +291,7 @@
   function usarCapa(est, meta, rng) {
     if (!podeUsarCapa(est)) return false;
     est.itens.capa -= 1;
+    if (est.log) est.log.push({ tipo: 'capa', pulou: est.cartaId });
     est.posArco -= 1;
     sacar(est, meta, rng, true);
     return true;
@@ -291,9 +306,11 @@
     const alvo = est.historico[idx];
     const restam = est.itens.ampulheta - 1;
     const hist = est.historico.slice(0, idx);
+    const log = (est.log || []).concat([{ tipo: 'ampulheta', voltouPara: alvo.cartaId }]);
     for (const k of Object.keys(est)) delete est[k];
     Object.assign(est, copia(alvo));
     est.historico = hist;
+    est.log = log;
     est.itens.ampulheta = restam;
     est.alerta = {};
     est.fase = 'carta';
@@ -307,7 +324,7 @@
     const r = resolver(alvo.o, est, meta);
     if (r.morte) return { morte: true, delta: 100 };
     const antes = caveira(est, meta).pct;
-    const sim = copia(Object.assign({}, est, { historico: [] }));
+    const sim = copia(Object.assign({}, est, { historico: [], log: [] }));
     aplicar(Object.assign({}, r, { ouroEvento: null }), sim, () => 0.5);
     return { morte: false, delta: caveira(sim, meta).pct - antes };
   }

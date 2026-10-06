@@ -17,6 +17,11 @@
   let est = carregar(CHAVE_RUN, null);
   let ocupado = false;
   let ecoTimer = null;
+  let cartaVistaEm = 0;
+  let cartaVistaId = null;
+  const VERSAO = 'proto-1';
+  // Banco da página (só existe quando o jogo roda publicado no claude.ai).
+  const dbPronto = (window.claude && window.claude.use) ? window.claude.use('db').catch(() => null) : Promise.resolve(null);
 
   function carregar(chave, padrao) {
     try { const t = localStorage.getItem(chave); return t ? JSON.parse(t) : padrao; } catch (e) { return padrao; }
@@ -88,6 +93,11 @@
     desenharQuem($('retrato'), carta.quem, 8);
     $('quem').textContent = (D.QUEM[carta.quem] || {}).nome || '';
     $('texto').textContent = (meta.runs > 1 && carta.textoLoop) ? carta.textoLoop : carta.texto;
+
+    if (cartaVistaId !== est.cartaId + ':' + est.total) {
+      cartaVistaId = est.cartaId + ':' + est.total;
+      cartaVistaEm = performance.now();
+    }
 
     const evento = $('evento');
     if (animar) { evento.classList.remove('entra'); void evento.offsetWidth; evento.classList.add('entra'); }
@@ -212,9 +222,11 @@
     $('acoes').classList.add('saindo');
     btn.classList.add('escolhida');
     setTimeout(() => {
+      const ms = Math.round(performance.now() - cartaVistaEm);
       const res = N.escolher(est, meta, pos, rng);
       ocupado = false;
       if (!res) return render();
+      if (res.entrada) res.entrada.ms = ms;
       salvar();
       if (res.eco || (res.evento && res.ganho)) mostrarEco(res.eco, res.evento ? res.ganho : 0);
       else if (res.ganho) mostrarEco(null, res.ganho);
@@ -262,6 +274,7 @@
     $('morteInfo').textContent = `Morte nº ${meta.totalMortes} · ${est.total} cartas · Ossuário ${N.mortesDescobertas(meta)}/${totalMortes()}`;
     $('btnVoltarTempo').hidden = !N.podeVoltar(est);
     $('btnCopiarMorte').textContent = 'COPIAR MINHA MORTE';
+    prepararNota('Morte');
     mostrarTela('telaMorte');
   }
 
@@ -275,6 +288,7 @@
     const achados = Object.keys(meta.finais).length;
     $('finalInfo').textContent = `Run ${est.run} · ${est.total} cartas · Finais ${achados}/${totalFinais()}`;
     $('btnCopiarFinal').textContent = 'COPIAR MEU FINAL';
+    prepararNota('Final');
     mostrarTela('telaFinal');
   }
 
@@ -366,6 +380,80 @@
     else mostrarTela(null);
   }
 
+  // ── Log da run ──
+  // Ao terminar (morte ou final), a run inteira vai pro banco da página.
+  // O Claude lê de lá depois pra avaliar o equilíbrio e o que o jogador sentiu.
+  function montarLog() {
+    const comeco = est.comecouEm || Date.now();
+    return {
+      jogo: 'moeda-ceifadora', versao: VERSAO,
+      criadoEm: new Date().toISOString(),
+      run: est.run, runsTotal: meta.runs, mortesTotal: meta.totalMortes,
+      ossuario: N.mortesDescobertas(meta), finaisDescobertos: Object.keys(meta.finais).length,
+      resultado: est.fase, id: est.fase === 'morte' ? est.morte : est.final,
+      titulo: est.fase === 'morte' ? D.MORTES[est.morte].titulo : D.FINAIS[est.final].titulo,
+      cartas: est.total, duracaoSeg: Math.round((Date.now() - comeco) / 1000),
+      eixos: est.eixos, rep: est.rep, ouro: est.ouro, flags: Object.keys(est.flags),
+      nota: '', log: est.log || []
+    };
+  }
+
+  async function enviarLog(suf) {
+    const status = $('logStatus' + suf);
+    if (est.logId) { status.textContent = 'Log desta run já salvo pro Claude.'; return; }
+    if (est.logEnviando) return;
+    est.logEnviando = true;
+    status.textContent = 'Salvando o log da run…';
+    const db = await dbPronto;
+    if (!db) {
+      est.logEnviando = false;
+      status.textContent = 'Fora do claude.ai o log não é salvo sozinho. Usa "Copiar log" e manda pro Claude.';
+      return;
+    }
+    try {
+      const ref = await db.collection('runs').add(montarLog());
+      est.logId = ref.id;
+      salvar();
+      status.textContent = 'Log salvo pro Claude ✓';
+    } catch (e) {
+      status.textContent = 'Não deu pra salvar o log (' + (e && e.code || 'erro') + '). Usa "Copiar log".';
+    } finally {
+      est.logEnviando = false;
+    }
+  }
+
+  function prepararNota(suf) {
+    const campo = $('nota' + suf);
+    campo.value = est.nota || '';
+    $('btnNota' + suf).textContent = 'SALVAR NOTA';
+    $('btnLog' + suf).textContent = 'COPIAR LOG';
+    enviarLog(suf);
+  }
+
+  async function salvarNota(suf) {
+    const btn = $('btnNota' + suf);
+    est.nota = $('nota' + suf).value.trim();
+    salvar();
+    const db = await dbPronto;
+    if (!db || !est.logId) { btn.textContent = 'GUARDADA NO LOG'; return; }
+    try {
+      await db.doc('runs/' + est.logId).update({ nota: est.nota });
+      btn.textContent = 'NOTA SALVA ✓';
+    } catch (e) {
+      btn.textContent = 'FALHOU: COPIA O LOG';
+    }
+  }
+
+  for (const suf of ['Morte', 'Final']) {
+    $('btnNota' + suf).addEventListener('click', () => salvarNota(suf));
+    $('btnLog' + suf).addEventListener('click', e => {
+      est.nota = $('nota' + suf).value.trim();
+      const log = montarLog();
+      log.nota = est.nota;
+      copiar(JSON.stringify(log), e.currentTarget);
+    });
+  }
+
   // ── Render geral ──
   function render(animar, antes) {
     if (!est) return renderTitulo();
@@ -388,6 +476,7 @@
     clearTimeout(ecoTimer);
     $('eco').hidden = true;
     est = N.novaRun(meta, rng);
+    est.comecouEm = Date.now();
     salvar();
     render(true);
   }
@@ -397,6 +486,7 @@
       await navigator.clipboard.writeText(texto);
       botao.textContent = 'COPIADO!';
     } catch (e) {
+      if (texto.length > 400) { botao.textContent = 'NÃO DEU PRA COPIAR'; return; }
       botao.textContent = 'SELECIONA E COPIA ABAIXO';
       mostrarEco(texto);
     }
