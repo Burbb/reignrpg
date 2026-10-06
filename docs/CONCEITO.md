@@ -8,6 +8,25 @@ O nome é provisório.
 
 ---
 
+## 0. Versão 2: por que o Arco I foi reescrito
+
+O primeiro teste humano (uma run do Jean) mostrou um protótipo raso: o texto curto demais deixava as cenas soltas, as escolhas não tinham consequência visível, as barras não diziam nada e ele saiu vivo na primeira run sem passar perto da morte. O simulador não pegou isso porque só testava escolhas aleatórias, e uma pessoa escolhe a opção sensata.
+
+A v2 reescreveu só o Arco I (O Fosso) com estas regras:
+
+| Problema da v1 | Regra da v2 |
+|---|---|
+| Cenas soltas, sem peso | **Fios**: Bartô, Mira e Bruto atravessam a run inteira, e as cartas lembram do que tu fizeste com eles. Mestre Varn, o carrasco, te persegue. |
+| Texto cortado pra caber | **Batidas**: cada carta tem 2 ou 3 trechos curtos; tu tocas pra avançar. Mais história com o mesmo ritmo. |
+| Sempre havia uma opção segura | **Toda escolha custa.** O simulador avisa quando uma opção não mexe em nada. |
+| As barras não queriam dizer nada | **As barras matam nos dois extremos (±7)**, como no Reigns. As zonas vermelhas ficam visíveis. O meio é seguro, mas cada escolha te empurra pra algum lado. |
+| Os eixos não mudavam as opções | **Opções com etiqueta** ([CRUEL], [LEAL], [BRUTO], [CHAVES]) aparecem conforme quem tu és e o que tu carregas. |
+| A caveira era um número sem rosto | **Presságios**: quando a caveira passa de 40%, aparece uma pista ("Mira sorri demais"). Relações com os companheiros ficam escondidas: tu não sabes quem vai te trair. |
+| Sair era fácil demais | **O pátio é uma barreira**: tu precisas de chaves, de um aliado, de um caminho ou de ousadia suficiente pra escalar o muro. Sem nada, Varn te alcança. |
+| A consequência sumia num aviso | **O eco da escolha** abre a carta seguinte, no topo. |
+
+Resultado no simulador, com um jogador "atento" que só vê o que a tela mostra: morre em ~53% das primeiras runs (na v1, um jogador sensato morria em ~18%). O Arco I tem 20 cartas, 15 mortes e 8 saídas.
+
 ## 1. A mudança principal: o crime vira o motivo pra jogar de novo
 
 No conceito original, o crime imperdoável era só pano de fundo. Agora ele explica o jogo inteiro:
@@ -31,7 +50,7 @@ Esse gancho resolve várias coisas de uma vez:
 
 Essas são as regras que segui no protótipo. Valem pra todo conteúdo novo:
 
-1. **Até ~150 caracteres por carta de evento** (2 ou 3 linhas no celular). No conceito original eram 3 a 4 linhas: cortei. A ideia é ler num relance.
+1. **Texto em batidas de até ~160 caracteres**, 2 ou 3 por carta, com toque pra avançar. (Na v1 a carta inteira tinha 150 caracteres: ficou raso. Ver a seção 0.)
 2. **Cada opção tem no máximo 3 ou 4 palavras.** O ícone diz metade.
 3. **Run curta.** Uma morte acontece em 1 a 3 minutos e uma run completa leva uns 6 a 8 minutos (24 cartas). Dá pra jogar na fila do ônibus.
 4. **Recomeçar com 1 toque.** Nada de menu entre uma morte e outra.
@@ -72,7 +91,7 @@ Isso substitui a linha do tempo fixa do conceito original. A história continua 
 | Passo | Ousado | Cauteloso |
 | Fama | Infame | Famoso |
 
-São três eixos de personalidade mais a fama. Mais que isso dilui o peso de cada escolha. Cada carta de ação mostra **pontinhos coloridos** com os eixos que ela vai mexer (o tamanho indica a intensidade), mas não mostra a direção. É a mesma lógica do Reigns.
+São três eixos de personalidade mais a fama. Mais que isso dilui o peso de cada escolha. **Na v2, os dois extremos de cada barra (±7) matam**: cauteloso demais e Varn te alcança; ousado demais e Odo te acerta com a besta; piedoso demais e tu morres salvando os outros. Cada carta de ação mostra **pontinhos coloridos** com os eixos que ela vai mexer (o tamanho indica a intensidade), mas não mostra a direção. É a mesma lógica do Reigns.
 
 ### A caveira (iminência de morte)
 
@@ -161,7 +180,7 @@ No protótipo, a arte é provisória: sprites de 12×12 desenhados por código, 
 ## 7. Próximos passos
 
 1. **Jogar o protótipo** (tu e a Livia) e anotar o que é chato, o que é injusto e o que é engraçado. A pergunta principal é se a caveira é divertida.
-2. **Ajustar os números** com o simulador (`node tools/simular.js`), que joga 50 mil runs e mostra quais mortes e finais acontecem com que frequência.
+2. **Ajustar os números** com o simulador (`node tools/simular.js`), que joga milhares de runs com três perfis de jogador (aleatório, atento e sensato) e mostra quais mortes e saídas acontecem com que frequência. Os logs das runs reais (salvos na página publicada) dizem o que o simulador não vê.
 3. **Desenhar a arte** começando pelos 12 ícones de ação e pelos 5 personagens do arco I. Trocar os sprites provisórios é só apontar pros PNGs.
 4. **Mais conteúdo.** A meta pra um jogo lançável é de **100 a 150 cartas**. Hoje são 39.
 5. **Plataforma.** Do jeito que está, já roda no navegador do celular. Pra lojas, dá pra empacotar como app (Capacitor) ou portar pro Godot. O conteúdo já está separado do motor, então qualquer caminho serve.

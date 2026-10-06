@@ -5,10 +5,10 @@
   const N = window.Nucleo;
   const D = window.DADOS;
   const S = window.Sprites;
-  const CHAVE_META = 'moeda-ceifadora:meta:v1';
-  const CHAVE_RUN = 'moeda-ceifadora:run:v1';
+  const CHAVE_META = 'moeda-ceifadora:meta:v2';
+  const CHAVE_RUN = 'moeda-ceifadora:run:v2';
   const ROMANOS = ['', 'I', 'II', 'III', 'IV', 'V'];
-  const EIXOS_HUD = ['coracao', 'palavra', 'passo', 'rep'];
+  const EIXOS_HUD = N.EIXOS_HUD;
   const rng = Math.random;
 
   const $ = id => document.getElementById(id);
@@ -19,7 +19,9 @@
   let ecoTimer = null;
   let cartaVistaEm = 0;
   let cartaVistaId = null;
-  const VERSAO = 'proto-1';
+  const VERSAO = 'v2-arco1';
+  let batida = 0;          // quantas batidas da carta atual já estão na tela (0 = a primeira)
+  let ecoAnterior = null;  // consequência da última escolha, mostrada no topo da carta seguinte
   // Banco da página (só existe quando o jogo roda publicado no claude.ai).
   const dbPronto = (window.claude && window.claude.use) ? window.claude.use('db').catch(() => null) : Promise.resolve(null);
 
@@ -52,7 +54,8 @@
       el.id = 'eixo-' + k;
       el.style.setProperty('--cor', `var(--eixo-${k})`);
       el.innerHTML = `<div class="eixo-nome"><span>${info.nome.toUpperCase()}</span><b></b></div>
-        <div class="trilho"><div class="enchimento"></div></div>`;
+        <div class="trilho"><div class="enchimento"></div></div>
+        <div class="polos"><span>${info.menos.toUpperCase()}</span><span>${info.mais.toUpperCase()}</span></div>`;
       box.appendChild(el);
     }
   }
@@ -76,6 +79,7 @@
       fill.style.left = (v >= 0 ? 50 : 50 - w) + '%';
       fill.style.width = w + '%';
       el.querySelector('b').textContent = v >= 3 ? info.mais : v <= -3 ? info.menos : '';
+      el.classList.toggle('perigo', Math.abs(v) >= D.PERIGO - 2);
       if (antes && antes[k] !== v) {
         el.classList.remove('mexeu');
         void el.offsetWidth;
@@ -85,23 +89,78 @@
   }
 
   // ── Carta e ações ──
+  // A carta chega em batidas: o jogador toca pra ler a próxima, e as escolhas
+  // só destravam na última. Texto com ritmo, sem parede de texto.
   function renderCarta(animar) {
-    const carta = N.cartaAtual(est);
     const arco = D.ARCOS[est.arco - 1];
     $('arcoNome').textContent = `ARCO ${ROMANOS[arco.n]} · ${arco.nome.toUpperCase()}`;
     $('arcoPos').textContent = `${Math.min(est.posArco, arco.tamanho)}/${arco.tamanho}`;
-    desenharQuem($('retrato'), carta.quem, 8);
-    $('quem').textContent = (D.QUEM[carta.quem] || {}).nome || '';
-    $('texto').textContent = (meta.runs > 1 && carta.textoLoop) ? carta.textoLoop : carta.texto;
 
-    if (cartaVistaId !== est.cartaId + ':' + est.total) {
+    const nova = cartaVistaId !== est.cartaId + ':' + est.total;
+    if (nova) {
       cartaVistaId = est.cartaId + ':' + est.total;
       cartaVistaEm = performance.now();
+      batida = 0;
     }
 
-    const evento = $('evento');
-    if (animar) { evento.classList.remove('entra'); void evento.offsetWidth; evento.classList.add('entra'); }
+    const eco = $('ecoCarta');
+    eco.hidden = !ecoAnterior;
+    eco.textContent = ecoAnterior || '';
 
+    const evento = $('evento');
+    if (animar && nova) { evento.classList.remove('entra'); void evento.offsetWidth; evento.classList.add('entra'); }
+    renderBatidas();
+    renderAcoes();
+  }
+
+  function renderBatidas() {
+    const bats = N.batidas(est, meta);
+    batida = Math.min(batida, bats.length - 1);
+    const atual = bats[batida];
+    desenharQuem($('retrato'), atual.quem, 6);
+    $('quem').textContent = (D.QUEM[atual.quem] || {}).nome || '';
+    const box = $('falas');
+    box.innerHTML = '';
+    bats.slice(0, batida + 1).forEach((b, i) => {
+      const p = document.createElement('p');
+      p.className = 'fala' + (i < batida ? ' antiga' : ' atual') + (b.quem !== 'narrador' ? ' dialogo' : '');
+      p.textContent = b.t;
+      box.appendChild(p);
+    });
+    const lendo = batida < bats.length - 1;
+    $('evento').classList.toggle('lendo', lendo);
+    $('avancar').hidden = !lendo;
+    $('acoes').classList.toggle('travadas', lendo);
+
+    const pr = $('pressagio');
+    const txt = lendo ? null : N.pressagio(est, meta);
+    pr.hidden = !txt;
+    pr.innerHTML = '';
+    if (txt) {
+      const c = document.createElement('canvas');
+      S.desenhar(c, 'caveira', 1);
+      pr.appendChild(c);
+      pr.appendChild(document.createTextNode(txt));
+    }
+  }
+
+  function avancarBatida() {
+    if (!est || est.fase !== 'carta') return false;
+    const total = N.batidas(est, meta).length;
+    if (batida >= total - 1) return false;
+    batida += 1;
+    renderBatidas();
+    return true;
+  }
+
+  function corEtiqueta(o) {
+    const c = (o.requer || [])[0] || {};
+    if (c.eixo && c.eixo !== 'ouro') return `var(--eixo-${c.eixo})`;
+    return 'var(--tocha)';
+  }
+
+  function renderAcoes() {
+    const carta = N.cartaAtual(est);
     const box = $('acoes');
     box.classList.remove('saindo');
     box.innerHTML = '';
@@ -111,6 +170,16 @@
       btn.type = 'button';
       btn.className = 'acao pixel';
       btn.id = 'acao-' + pos;
+
+      const tag = N.etiqueta(x.o);
+      if (tag) {
+        const t = document.createElement('span');
+        t.className = 'etiqueta';
+        t.style.setProperty('--cor', corEtiqueta(x.o));
+        t.textContent = tag;
+        btn.appendChild(t);
+      }
+
       const cv = document.createElement('canvas');
       S.desenhar(cv, x.o.icone, 4);
       btn.appendChild(cv);
@@ -161,7 +230,7 @@
         btn.appendChild(t);
       }
 
-      btn.setAttribute('aria-label', x.o.rotulo);
+      btn.setAttribute('aria-label', (tag ? tag + ': ' : '') + x.o.rotulo);
       btn.addEventListener('click', () => escolher(pos));
       box.appendChild(btn);
     });
@@ -177,6 +246,29 @@
       el.appendChild(document.createTextNode(txt));
       box.appendChild(el);
     };
+    const comp = N.companheiros(est);
+    if (comp.length) {
+      const t = document.createElement('span');
+      t.className = 'rodape-titulo';
+      t.textContent = 'CONTIGO';
+      box.appendChild(t);
+      for (const c of comp) {
+        const el = document.createElement('span');
+        el.className = 'chip pixel companheiro';
+        const cv = document.createElement('canvas');
+        desenharQuem(cv, c, 2);
+        el.appendChild(cv);
+        el.appendChild(document.createTextNode(D.REL_INFO[c].toUpperCase()));
+        box.appendChild(el);
+      }
+    }
+    for (const [flag, nome] of Object.entries(D.ITENS_FLAG || {})) {
+      if (!est.flags[flag]) continue;
+      const el = document.createElement('span');
+      el.className = 'chip pixel' + (flag === 'ferido' ? ' ferido' : '');
+      el.textContent = nome.toUpperCase();
+      box.appendChild(el);
+    }
     if (est.poderes.falcao > 0) chip(`OLHO DO FALCÃO · ${est.poderes.falcao}`, 'olho');
     if (est.poderes.sussurro > 0) chip(`SUSSURRO · ${est.poderes.sussurro}`, 'caveira');
     if (est.bolsa) chip('BOLSA DO AVARENTO PRONTA', 'saco');
@@ -214,6 +306,7 @@
 
   function escolher(pos) {
     if (ocupado || !est || est.fase !== 'carta') return;
+    if (batida < N.batidas(est, meta).length - 1) return;
     const btn = $('acao-' + pos);
     if (!btn) return;
     ocupado = true;
@@ -228,8 +321,8 @@
       if (!res) return render();
       if (res.entrada) res.entrada.ms = ms;
       salvar();
-      if (res.eco || (res.evento && res.ganho)) mostrarEco(res.eco, res.evento ? res.ganho : 0);
-      else if (res.ganho) mostrarEco(null, res.ganho);
+      ecoAnterior = res.eco || null;
+      if (res.ganho) mostrarEco(null, res.ganho);
       render(true, antes);
     }, 200);
   }
@@ -254,6 +347,14 @@
     const box = $('morteMotivos');
     box.innerHTML = '';
     for (const mot of N.motivos(est.morte, est)) {
+      if (mot.rel) {
+        const el = document.createElement('span');
+        el.className = 'motivo';
+        el.style.setProperty('--cor', 'var(--sangue)');
+        el.textContent = `${D.REL_INFO[mot.rel].toUpperCase()} JÁ NÃO CONFIAVA EM TI (${mot.valor})`;
+        box.appendChild(el);
+        continue;
+      }
       const info = D.EIXOS_INFO[mot.eixo];
       const el = document.createElement('span');
       el.className = 'motivo';
@@ -280,16 +381,42 @@
 
   function renderFinal() {
     const f = D.FINAIS[est.final];
-    $('finalSelo').textContent = est.finalNovo ? 'NOVO FINAL' : 'FINAL CONHECIDO';
+    $('finalSelo').textContent = est.finalNovo ? 'NOVA SAÍDA DESCOBERTA' : 'SAÍDA CONHECIDA';
+    renderDestinos();
     desenharQuem($('finalRetrato'), f.quem, 8);
     $('finalTitulo').textContent = f.titulo;
     $('finalTexto').textContent = f.texto;
     $('finalFala').textContent = est.final === 'verdadeiro' ? 'Fim. De verdade, desta vez.' : D.FALAS.finalLoop;
     const achados = Object.keys(meta.finais).length;
-    $('finalInfo').textContent = `Run ${est.run} · ${est.total} cartas · Finais ${achados}/${totalFinais()}`;
+    $('finalInfo').textContent = `Run ${est.run} · ${est.total} cartas · Saídas ${achados}/${totalFinais()}`;
     $('btnCopiarFinal').textContent = 'COPIAR MEU FINAL';
     prepararNota('Final');
     mostrarTela('telaFinal');
+  }
+
+  function renderDestinos() {
+    const box = $('finalDestinos');
+    box.innerHTML = '';
+    const linha = (rotulo, texto) => {
+      const p = document.createElement('div');
+      const s1 = document.createElement('span');
+      s1.textContent = rotulo;
+      p.appendChild(s1);
+      p.appendChild(document.createTextNode(texto));
+      box.appendChild(p);
+    };
+    const contigo = N.companheiros(est).map(c => D.REL_INFO[c]);
+    linha('CONTIGO', contigo.length ? contigo.join(', ') : 'ninguém');
+    const perdas = [];
+    for (const [c, d] of Object.entries(D.DESTINOS || {})) {
+      if (est.flags[d.com]) continue;
+      for (const [flag, txt] of Object.entries(d.perdas)) {
+        if (est.flags[flag]) { perdas.push(`${D.REL_INFO[c]} ${txt}`); break; }
+      }
+    }
+    if (perdas.length) linha('PRA TRÁS', perdas.join(' · '));
+    const carrega = Object.entries(D.ITENS_FLAG || {}).filter(([f]) => est.flags[f]).map(([, n]) => n.toLowerCase());
+    if (carrega.length) linha('LEVAS', carrega.join(', '));
   }
 
   function renderCaravana() {
@@ -366,7 +493,7 @@
     $('btnComecar').textContent = emCurso ? 'CONTINUAR A FUGA' : 'FUGIR DA CELA';
     $('tituloMeta').textContent = meta.runs
       ? `${meta.totalMortes} mortes · Ossuário ${N.mortesDescobertas(meta)}/${totalMortes()}`
-      : 'Protótipo · arte provisória';
+      : 'Protótipo v2 · Arco I · arte provisória';
     mostrarTela('telaTitulo');
   }
 
@@ -394,6 +521,7 @@
       titulo: est.fase === 'morte' ? D.MORTES[est.morte].titulo : D.FINAIS[est.final].titulo,
       cartas: est.total, duracaoSeg: Math.round((Date.now() - comeco) / 1000),
       eixos: est.eixos, rep: est.rep, ouro: est.ouro, flags: Object.keys(est.flags),
+      relacoes: est.rel, companheiros: N.companheiros(est),
       nota: '', log: est.log || []
     };
   }
@@ -475,6 +603,7 @@
   function novaRun() {
     clearTimeout(ecoTimer);
     $('eco').hidden = true;
+    ecoAnterior = null;
     est = N.novaRun(meta, rng);
     est.comecouEm = Date.now();
     salvar();
@@ -514,9 +643,12 @@
     const f = D.FINAIS[est.final];
     copiar(`★ Escapei em A Moeda da Ceifadora: "${f.titulo}" depois de ${meta.totalMortes} mortes. Finais ${Object.keys(meta.finais).length}/${totalFinais()}.`, e.currentTarget);
   });
+  $('evento').addEventListener('click', () => avancarBatida());
+  $('avancar').addEventListener('click', e => { e.stopPropagation(); avancarBatida(); });
   document.addEventListener('keydown', e => {
     if (e.altKey || e.ctrlKey || e.metaKey) return;
     const aberta = TELAS.some(t => !$(t).hidden);
+    if (!aberta && (e.key === ' ' || e.key === 'Enter') && avancarBatida()) { e.preventDefault(); return; }
     if (!aberta && ['1', '2', '3'].includes(e.key)) { e.preventDefault(); escolher(Number(e.key) - 1); }
     if (e.key === 'Escape' && !$('telaOssuario').hidden) fecharOssuario();
   });

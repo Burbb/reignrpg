@@ -1,5 +1,9 @@
 #!/usr/bin/env node
-// Valida o conteúdo e joga milhares de runs aleatórias pra medir o equilíbrio.
+// Valida o conteúdo e joga milhares de runs pra medir o equilíbrio.
+// Joga com dois perfis:
+//   aleatório -> escolhe qualquer carta
+//   atento    -> olha as barras e evita empurrar uma que já está perto do extremo (uma pessoa jogando)
+//   sensato   -> sabe exatamente quanto cada carta sobe a caveira (como com o Olho do Falcão)
 // Uso: node tools/simular.js [jogadores] [runsPorJogador]
 'use strict';
 require('../js/cartas.js');
@@ -12,25 +16,34 @@ const N = globalThis.Nucleo;
 const erros = [];
 const avisos = [];
 const ICONES = new Set(['caveira', 'moeda', 'cabeca', 'goblin', 'rato', 'chama', 'adaga', 'bota', 'olho', 'balao', 'mascara', 'saco', 'ampulheta', 'chave', 'coracao']);
+const textoDe = b => (typeof b === 'string' ? b : b.t);
+const quemDe = (b, c) => (typeof b === 'string' ? c.quem : (b.quem || c.quem));
+
 for (const a of D.ARCOS) {
-  for (const id of [a.inicio, a.fim, a.fixa && a.fixa.id].filter(Boolean)) {
+  const fixas = a.fixas || (a.fixa ? [a.fixa] : []);
+  for (const id of [a.inicio, a.fim, ...fixas.map(f => f.id)]) {
     if (!D.CARTAS[id]) erros.push(`Arco ${a.n}: carta "${id}" não existe`);
   }
 }
 for (const c of D.LISTA_CARTAS) {
   if (!D.QUEM[c.quem]) erros.push(`${c.id}: personagem "${c.quem}" não existe`);
-  if (c.texto.length > 150) avisos.push(`${c.id}: texto com ${c.texto.length} caracteres (meta: até 150)`);
-  if (c.opcoes.length < 3) erros.push(`${c.id}: menos de 3 opções`);
-  const semRequisito = c.opcoes.filter(o => !o.requer).length;
-  if (semRequisito < 1) erros.push(`${c.id}: nenhuma opção sempre disponível`);
+  const batidas = [].concat(c.texto, c.textoLoop || [], c.extras || []);
+  for (const b of batidas) {
+    if (!D.QUEM[quemDe(b, c)]) erros.push(`${c.id}: personagem "${quemDe(b, c)}" não existe`);
+    if (textoDe(b).length > 160) avisos.push(`${c.id}: batida com ${textoDe(b).length} caracteres (meta: até 160)`);
+  }
+  if (!c.opcoes.some(o => !o.requer)) erros.push(`${c.id}: nenhuma opção sempre disponível`);
+  if (c.opcoes.filter(o => !o.requer).length < 2 && c.tipo !== 'fim') avisos.push(`${c.id}: só uma opção sempre disponível`);
   for (const o of c.opcoes) {
-    if (o.rotulo.length > 22) avisos.push(`${c.id}: rótulo "${o.rotulo}" longo (${o.rotulo.length})`);
+    if (o.rotulo.length > 24) avisos.push(`${c.id}: rótulo "${o.rotulo}" longo (${o.rotulo.length})`);
     if (!ICONES.has(o.icone)) erros.push(`${c.id}: ícone "${o.icone}" não existe`);
     for (const alvo of [o, ...(o.casos || [])]) {
       if (alvo.proxima && !D.CARTAS[alvo.proxima]) erros.push(`${c.id}: proxima "${alvo.proxima}" não existe`);
       if (alvo.morte && !D.MORTES[alvo.morte]) erros.push(`${c.id}: morte "${alvo.morte}" não existe`);
       if (alvo.final && !D.FINAIS[alvo.final]) erros.push(`${c.id}: final "${alvo.final}" não existe`);
     }
+    const custo = o.ef || o.rel || o.morte || o.final || o.ouroEvento || o.proxima;
+    if (!custo) avisos.push(`${c.id}: "${o.rotulo}" não custa nada`);
   }
 }
 for (const [id, m] of Object.entries(D.MORTES)) {
@@ -48,45 +61,66 @@ function rngSemente(s) {
 }
 
 const jogadores = Number(process.argv[2] || 2000);
-const runsPor = Number(process.argv[3] || 25);
-const rng = rngSemente(42);
+const runsPor = Number(process.argv[3] || 10);
 
-const stat = {
-  runs: 0, cartas: 0, mortes: {}, finais: {}, chegouArco: { 1: 0, 2: 0, 3: 0 },
-  ouroCaravana: [], caveira: [], primeiroVerdadeiro: [], cartasPorTipo: {}, travou: 0
-};
-
-for (let j = 0; j < jogadores; j++) {
-  const meta = N.novoMeta();
-  let achouVerdadeiro = false;
-  for (let r = 0; r < runsPor; r++) {
-    const est = N.novaRun(meta, rng);
-    stat.runs++;
-    let passos = 0;
-    while (est.fase !== 'morte' && est.fase !== 'final') {
-      if (++passos > 200) { stat.travou++; break; }
-      stat.chegouArco[est.arco] = (stat.chegouArco[est.arco] || 0) + (est.posArco === 1 && est.fase === 'carta' ? 1 : 0);
-      if (est.fase === 'caravana') {
-        stat.ouroCaravana.push(est.ouro);
-        for (const id of est.caravana) if (rng() < 0.6) N.comprar(est, id);
-        N.sairCaravana(est, meta, rng);
-        continue;
+function simular(perfil, semente) {
+  const rng = rngSemente(semente);
+  const st = {
+    runs: 0, cartas: 0, fins: {}, cartasVistas: {}, caveiraMax: [], primeiraRun: { morte: 0, final: 0 },
+    companheirosNaSaida: {}, saidasPorRun: [], travou: 0
+  };
+  for (let j = 0; j < jogadores; j++) {
+    const meta = N.novoMeta();
+    for (let r = 0; r < runsPor; r++) {
+      const est = N.novaRun(meta, rng);
+      st.runs++;
+      let passos = 0, cavMax = 0;
+      while (est.fase === 'carta' || est.fase === 'caravana') {
+        if (++passos > 200) { st.travou++; break; }
+        if (est.fase === 'caravana') { N.sairCaravana(est, meta, rng); continue; }
+        st.cartasVistas[est.cartaId] = (st.cartasVistas[est.cartaId] || 0) + 1;
+        cavMax = Math.max(cavMax, N.caveira(est, meta).pct);
+        const vis = N.opcoesVisiveis(est, meta);
+        if (!vis.length) { erros.push(`Sem opções em ${est.cartaId}`); break; }
+        let pos = Math.floor(rng() * vis.length);
+        if (perfil === 'atento' && rng() < 0.8) {
+          // Vê só o que a tela mostra: as barras e quais eixos cada carta mexe.
+          // Evita empurrar uma barra que já está perto do extremo e evita o déjà vu.
+          let melhor = Infinity;
+          vis.forEach((x, i) => {
+            const ef = N.efeitosVisiveis(est, meta, i);
+            let nota = rng() * 2;
+            for (const [k, d] of Object.entries(ef)) {
+              const v = k === 'rep' ? est.rep : est.eixos[k];
+              nota += Math.max(0, Math.abs(v + d) - 3) ** 2;
+            }
+            if (meta.dejavu[est.cartaId + ':' + x.i]) nota += 500;
+            if (nota < melhor) { melhor = nota; pos = i; }
+          });
+        }
+        if (perfil === 'sensato' && rng() < 0.8) {
+          let melhor = Infinity;
+          vis.forEach((x, i) => {
+            const pv = N.previsao(est, meta, i);
+            const nota = pv.morte ? 1000 : pv.delta + rng() * 6;
+            const dv = meta.dejavu[est.cartaId + ':' + x.i] ? 500 : 0;
+            if (nota + dv < melhor) { melhor = nota + dv; pos = i; }
+          });
+        }
+        N.escolher(est, meta, pos, rng);
+        st.cartas++;
       }
-      stat.caveira.push(N.caveira(est, meta).pct);
-      const vis = N.opcoesVisiveis(est, meta);
-      if (!vis.length) { erros.push(`Sem opções em ${est.cartaId}`); break; }
-      // Jogador "esperto pela metade": evita escolhas que já o mataram (déjà vu) na maioria das vezes.
-      let pos = Math.floor(rng() * vis.length);
-      const chave = est.cartaId + ':' + vis[pos].i;
-      if (meta.dejavu[chave] && rng() < 0.8) pos = (pos + 1) % vis.length;
-      N.escolher(est, meta, pos, rng);
-      stat.cartas++;
-      if (est.fase === 'morte' && N.podeVoltar(est) && rng() < 0.9) N.voltarNoTempo(est);
+      st.caveiraMax.push(cavMax);
+      const chave = est.fase === 'morte' ? '☠ ' + D.MORTES[est.morte].titulo : '★ ' + D.FINAIS[est.final].titulo;
+      st.fins[chave] = (st.fins[chave] || 0) + 1;
+      if (r === 0) st.primeiraRun[est.fase === 'morte' ? 'morte' : 'final']++;
+      if (est.fase === 'final') {
+        const n = N.companheiros(est).length;
+        st.companheirosNaSaida[n] = (st.companheirosNaSaida[n] || 0) + 1;
+      }
     }
-    if (est.fase === 'morte') stat.mortes[est.morte] = (stat.mortes[est.morte] || 0) + 1;
-    if (est.fase === 'final') stat.finais[est.final] = (stat.finais[est.final] || 0) + 1;
-    if (est.final === 'verdadeiro' && !achouVerdadeiro) { achouVerdadeiro = true; stat.primeiroVerdadeiro.push(r + 1); }
   }
+  return st;
 }
 
 const pct = (n, t) => (100 * n / t).toFixed(1).padStart(5) + '%';
@@ -97,20 +131,23 @@ if (!erros.length) console.log('Sem erros.');
 erros.forEach(e => console.log('ERRO  ' + e));
 avisos.forEach(a => console.log('aviso ' + a));
 
-console.log(`\n== Simulação: ${jogadores} jogadores × ${runsPor} runs (escolhas aleatórias) ==`);
-console.log(`Cartas por run (média): ${(stat.cartas / stat.runs).toFixed(1)}`);
-console.log(`Runs que chegaram ao arco II: ${pct(stat.chegouArco[2], stat.runs)} · arco III: ${pct(stat.chegouArco[3], stat.runs)}`);
-console.log(`Ouro ao chegar na caravana (média): ${media(stat.ouroCaravana).toFixed(0)}`);
-console.log(`Caveira média por carta: ${media(stat.caveira).toFixed(0)}%`);
-console.log('\nComo as runs terminaram:');
-const fins = [
-  ...Object.entries(stat.mortes).map(([k, v]) => ['☠ ' + D.MORTES[k].titulo, v]),
-  ...Object.entries(stat.finais).map(([k, v]) => ['★ ' + D.FINAIS[k].titulo, v])
-].sort((a, b) => b[1] - a[1]);
-for (const [nome, v] of fins) console.log(`  ${pct(v, stat.runs)}  ${nome}`);
-const nunca = Object.keys(D.MORTES).filter(k => !stat.mortes[k]).concat(Object.keys(D.FINAIS).filter(k => !stat.finais[k]));
-if (nunca.length) console.log('Nunca aconteceu: ' + nunca.join(', '));
-console.log(`\nFinal verdadeiro: ${stat.primeiroVerdadeiro.length} de ${jogadores} jogadores; primeira vez na run ${media(stat.primeiroVerdadeiro).toFixed(1)} (média)`);
-if (stat.travou) console.log(`Runs travadas: ${stat.travou}`);
+for (const perfil of ['aleatório', 'atento', 'sensato']) {
+  const st = simular(perfil, 42);
+  const mortes = Object.entries(st.fins).filter(([k]) => k.startsWith('☠')).reduce((s, [, v]) => s + v, 0);
+  console.log(`\n== Jogador ${perfil}: ${jogadores} jogadores × ${runsPor} runs ==`);
+  console.log(`Morre em ${pct(mortes, st.runs)} das runs · na PRIMEIRA run: ${pct(st.primeiraRun.morte, jogadores)}`);
+  console.log(`Cartas por run: ${(st.cartas / st.runs).toFixed(1)} · caveira máxima média: ${media(st.caveiraMax).toFixed(0)}% · runs que passaram de 60%: ${pct(st.caveiraMax.filter(x => x >= 60).length, st.runs)}`);
+  const comp = Object.entries(st.companheirosNaSaida).map(([n, v]) => `${n}: ${v}`).join(' · ');
+  console.log(`Companheiros na saída (quantos → runs): ${comp}`);
+  console.log('Como as runs terminaram:');
+  for (const [nome, v] of Object.entries(st.fins).sort((a, b) => b[1] - a[1])) console.log(`  ${pct(v, st.runs)}  ${nome}`);
+  const nunca = [...Object.keys(D.MORTES).map(k => '☠ ' + D.MORTES[k].titulo), ...Object.keys(D.FINAIS).map(k => '★ ' + D.FINAIS[k].titulo)].filter(k => !st.fins[k]);
+  if (nunca.length) console.log('Nunca aconteceu: ' + nunca.join(', '));
+  if (perfil === 'aleatório') {
+    const nuncaVista = D.LISTA_CARTAS.filter(c => !st.cartasVistas[c.id]).map(c => c.id);
+    if (nuncaVista.length) console.log('Cartas nunca vistas: ' + nuncaVista.join(', '));
+  }
+  if (st.travou) console.log(`Runs travadas: ${st.travou}`);
+}
 
 process.exit(erros.length ? 1 : 0);

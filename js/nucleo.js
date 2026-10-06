@@ -3,7 +3,9 @@
   'use strict';
 
   const EIXOS = ['coracao', 'palavra', 'passo'];
+  const EIXOS_HUD = ['coracao', 'palavra', 'passo', 'rep'];
   const LIMITE = 10;
+  const LIMITE_REL = 5;
   const HISTORICO_MAX = 8;
   const VOLTA_AMPULHETA = 5;
 
@@ -34,6 +36,7 @@
     if (c.qualquer) return c.qualquer.some(x => cumpre(x, est, meta));
     if (c.flag) return !!est.flags[c.flag];
     if (c.semFlag) return !est.flags[c.semFlag];
+    if (c.rel) return compara(est.rel[c.rel] || 0, c.op, c.v);
     if (c.meta) {
       const v = c.meta === 'mortes' ? mortesDescobertas(meta) : (meta[c.meta] || 0);
       return compara(v, c.op, c.v);
@@ -45,17 +48,17 @@
   // ── A caveira ──
   // Cada morte com condições tem uma "proximidade" de 0 a 1:
   //  - condições de flag são portas: se não batem, proximidade 0;
-  //  - condições de eixo valem 1 se batem e caem linearmente com a distância
-  //    (8 pontos de eixo, ou 60 de ouro, até chegar a 0);
-  //  - a proximidade é a média das condições de eixo.
+  //  - condições numéricas valem 1 se batem e caem linearmente com a distância
+  //    (8 pontos de eixo, 4 de relação ou 60 de ouro, até chegar a 0);
+  //  - a proximidade é a média das condições numéricas.
   // A caveira mostra a maior proximidade entre as mortes do arco atual, com uma curva
   // (p^1.6) pra que longe pareça calmo e perto suba rápido.
   function proximidade(morte, est, meta) {
     let soma = 0, n = 0;
     for (const c of morte.cond) {
-      if (c.eixo) {
-        const x = valor(est, c.eixo);
-        const faixa = c.eixo === 'ouro' ? 60 : 8;
+      if (c.eixo || c.rel) {
+        const x = c.rel ? (est.rel[c.rel] || 0) : valor(est, c.eixo);
+        const faixa = c.rel ? 4 : c.eixo === 'ouro' ? 60 : 8;
         const dist = c.op.startsWith('<') ? x - c.v : c.v - x;
         soma += dist <= 0 ? 1 : Math.max(0, 1 - dist / faixa);
         n++;
@@ -83,6 +86,7 @@
     const est = {
       run: meta.runs, arco: 1, posArco: 0, total: 0, fase: 'carta', cartaId: null,
       eixos: { coracao: 0, palavra: 0, passo: 0 }, rep: 0, ouro: 0,
+      rel: Object.fromEntries((D().COMPANHEIROS || []).map(c => [c, 0])),
       flags: {}, vistas: {}, fixaFeita: {}, fila: [], alerta: {}, fortuna: {},
       poderes: { falcao: 0, sussurro: 0 }, itens: { capa: 0, ampulheta: 0 }, bolsa: false,
       caravana: null, compras: {}, morte: null, morteNova: false, morteChave: null,
@@ -93,6 +97,26 @@
   }
 
   const cartaAtual = est => D().CARTAS[est.cartaId];
+  const companheiros = est => (D().COMPANHEIROS || []).filter(c => est.flags['com_' + c]);
+
+  // Texto da carta em batidas: cada batida é { quem, t }.
+  // `texto` pode ser uma frase ou uma lista; `extras` acrescentam (ou trocam, com `troca: i`)
+  // batidas conforme o que já aconteceu na run.
+  function batidas(est, meta) {
+    const carta = cartaAtual(est);
+    if (!carta) return [];
+    const norm = b => (typeof b === 'string' ? { quem: carta.quem, t: b } : { quem: b.quem || carta.quem, t: b.t });
+    let base = (meta.runs > 1 && carta.textoLoop) ? carta.textoLoop : carta.texto;
+    const lista = (Array.isArray(base) ? base : [base]).map(norm);
+    for (const ex of carta.extras || []) {
+      if (!cumpreTodas(ex.se, est, meta)) continue;
+      const b = norm(ex);
+      if (typeof ex.troca === 'number' && lista[ex.troca]) lista[ex.troca] = b;
+      else if (ex.antes) lista.unshift(b);
+      else lista.push(b);
+    }
+    return lista;
+  }
 
   function opcoesVisiveis(est, meta) {
     const carta = cartaAtual(est);
@@ -101,6 +125,30 @@
       .map((o, i) => ({ o, i }))
       .filter(x => cumpreTodas(x.o.requer, est, meta))
       .slice(0, 3);
+  }
+
+  // Etiqueta de uma opção destravada: diz ao jogador por que ela apareceu
+  // ("CRUEL", "BRUTO", "CHAVES"). Assim os eixos e as escolhas passadas ficam visíveis.
+  function etiqueta(o) {
+    for (const c of o.requer || []) {
+      if (c.etiqueta) return c.etiqueta;
+      if (c.eixo === 'ouro') return c.v + ' OURO';
+      if (c.eixo) {
+        const info = D().EIXOS_INFO[c.eixo];
+        return (c.op.startsWith('>') ? (c.v > 0 ? info.mais : info.menos) : (c.v < 0 ? info.menos : info.mais)).toUpperCase();
+      }
+      if (c.flag && c.flag.startsWith('com_')) {
+        const curto = (D().REL_INFO || {})[c.flag.slice(4)];
+        const q = D().QUEM[c.flag.slice(4)];
+        if (curto || q) return (curto || q.nome.split(' ').pop()).toUpperCase();
+      }
+      if (c.flag && D().ITENS_FLAG && D().ITENS_FLAG[c.flag]) return D().ITENS_FLAG[c.flag].toUpperCase();
+      if (c.qualquer) {
+        const sub = etiqueta({ requer: c.qualquer });
+        if (sub) return sub;
+      }
+    }
+    return null;
   }
 
   function resolver(o, est, meta) {
@@ -131,6 +179,9 @@
     for (const e of EIXOS) if (ef[e]) est.eixos[e] = clamp(est.eixos[e] + ef[e], -LIMITE, LIMITE);
     if (ef.rep) est.rep = clamp(est.rep + ef.rep, -LIMITE, LIMITE);
     if (ef.ouro) est.ouro = Math.max(0, est.ouro + ef.ouro);
+    for (const [quem, d] of Object.entries(r.rel || {})) {
+      est.rel[quem] = clamp((est.rel[quem] || 0) + d, -LIMITE_REL, LIMITE_REL);
+    }
     (r.flags || []).forEach(f => { est.flags[f] = true; });
     (r.tira || []).forEach(f => { delete est.flags[f]; });
     let ganho = ef.ouro > 0 ? ef.ouro : 0;
@@ -158,12 +209,15 @@
     est.final = id;
     est.finalNovo = !meta.finais[id];
     meta.finais[id] = (meta.finais[id] || 0) + 1;
-    if (est.log) est.log.push({ tipo: 'final', id });
+    if (est.log) est.log.push({ tipo: 'final', id, companheiros: companheiros(est) });
   }
 
   function sortear(est, meta, rng, arcoN) {
-    const cands = D().LISTA_CARTAS.filter(c =>
+    let cands = D().LISTA_CARTAS.filter(c =>
       c.arco === arcoN && !c.tipo && !c.soVia && !est.vistas[c.id] && cumpreTodas(c.requer, est, meta));
+    // Cartas "cedo" (os encontros que apresentam o elenco) saem primeiro.
+    const cedo = cands.filter(c => c.cedo);
+    if (cedo.length) cands = cedo;
     if (!cands.length) return null;
     const total = cands.reduce((s, c) => s + (c.peso || 1), 0);
     let x = rng() * total;
@@ -187,14 +241,14 @@
       }
     }
     const arco = D().ARCOS[est.arco - 1];
+    const fixas = arco.fixas || (arco.fixa ? [arco.fixa] : []);
+    const fixa = fixas.find(f => !est.fixaFeita[f.id] && est.posArco >= f.pos);
     let id = null;
     if (est.fila.length) id = est.fila.shift();
     else if (est.posArco === 0) id = arco.inicio;
     else if (est.posArco >= arco.tamanho - 1) id = arco.fim;
-    else if (arco.fixa && !est.fixaFeita[est.arco] && est.posArco >= arco.fixa.pos) {
-      id = arco.fixa.id;
-      est.fixaFeita[est.arco] = true;
-    } else id = sortear(est, meta, rng, arco.n);
+    else if (fixa) { id = fixa.id; est.fixaFeita[fixa.id] = true; }
+    else id = sortear(est, meta, rng, arco.n);
     if (!id) id = arco.fim;
     est.posArco += 1;
     est.vistas[id] = true;
@@ -230,7 +284,9 @@
     const entrada = {
       tipo: 'escolha', n: est.total, arco: est.arco, carta: carta.id,
       opcoes: vis.map(x => x.o.rotulo), escolha: alvo.o.rotulo,
-      ef: r.ef || {}, ganho, eixos: Object.assign({}, est.eixos), rep: est.rep, ouro: est.ouro,
+      ef: r.ef || {}, rel: r.rel || {}, ganho,
+      eixos: Object.assign({}, est.eixos), rep: est.rep, ouro: est.ouro,
+      relacoes: Object.assign({}, est.rel), companheiros: companheiros(est),
       caveira: [cavAntes, cavDepois.pct], mortePerto: cavDepois.id,
       eco: r.eco || null, poderes: { falcao: est.poderes.falcao > 0, sussurro: est.poderes.sussurro > 0 }
     };
@@ -254,7 +310,7 @@
         est.fase = 'caravana';
         est.caravana = ofertas(meta, rng);
       } else {
-        finalizar(est, meta, 'estrada');
+        finalizar(est, meta, D().FINAL_PADRAO);
       }
       return res;
     }
@@ -334,20 +390,32 @@
     if (!alvo) return {};
     const ef = resolver(alvo.o, est, meta).ef || {};
     const out = {};
-    for (const k of ['coracao', 'palavra', 'passo', 'rep']) if (ef[k]) out[k] = ef[k];
+    for (const k of EIXOS_HUD) if (ef[k]) out[k] = ef[k];
     return out;
+  }
+
+  // Presságio: uma pista sobre a morte mais próxima, nunca a resposta.
+  function pressagio(est, meta) {
+    const cav = caveira(est, meta);
+    if (!cav.id || cav.pct < 40) return null;
+    const lista = D().MORTES[cav.id].pressagios || [];
+    if (!lista.length) return null;
+    return lista[(est.total + est.run) % lista.length];
   }
 
   // Explica por que uma morte aconteceu: as condições e os valores do jogador.
   function motivos(id, est) {
     const m = D().MORTES[id];
     if (!m || !m.cond) return [];
-    return m.cond.filter(c => c.eixo).map(c => ({ eixo: c.eixo, valor: valor(est, c.eixo), op: c.op, limite: c.v }));
+    return m.cond.filter(c => c.eixo || c.rel).map(c => c.rel
+      ? { rel: c.rel, valor: est.rel[c.rel] || 0 }
+      : { eixo: c.eixo, valor: valor(est, c.eixo), op: c.op, limite: c.v });
   }
 
   raiz.Nucleo = {
-    EIXOS, novoMeta, mortesDescobertas, novaRun, cartaAtual, opcoesVisiveis, escolher,
-    caveira, previsao, efeitosVisiveis, comprar, sairCaravana, podeUsarCapa, usarCapa,
-    podeVoltar, voltarNoTempo, motivos, resolver, cumpreTodas, proximidade
+    EIXOS, EIXOS_HUD, novoMeta, mortesDescobertas, novaRun, cartaAtual, companheiros, batidas,
+    opcoesVisiveis, etiqueta, escolher, caveira, pressagio, previsao, efeitosVisiveis, comprar,
+    sairCaravana, podeUsarCapa, usarCapa, podeVoltar, voltarNoTempo, motivos, resolver,
+    cumpreTodas, proximidade
   };
 })(typeof window !== 'undefined' ? window : globalThis);
